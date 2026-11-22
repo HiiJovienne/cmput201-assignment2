@@ -6,16 +6,14 @@
 
 #define MAX_NODES 100
 
-// 节点实体对象池（用于里程碑阶段，避免频繁动态内存分配）
+//避免频繁动态内存分配）
 static Node node_pool[MAX_NODES];
 static int node_pool_count = 0;
 
-// Open (MinHeap) 和 ClosedList 底层使用的 Node* 指针数组
 static Node* open_data[MAX_NODES];
 static Node* closed_data[MAX_NODES];
 
-// --- 内部辅助函数 ---
-
+// 内部辅助函数 
 // 优先级比较：返回 true 表示 a 的优先级高于 b（a 应该更靠近堆顶）
 // 依次比较 f -> h -> x -> y，均为较小者优先
 static bool has_higher_priority(const Node *a, const Node *b) {
@@ -39,7 +37,7 @@ static void trim_line_endings(char *str) {
     }
 }
 
-// --- Node Constructor ---
+//  Node Constructor 
 
 Node* create_node(int x, int y, int g, int h, Node *parent) {
     if (node_pool_count >= MAX_NODES) {
@@ -55,7 +53,7 @@ Node* create_node(int x, int y, int g, int h, Node *parent) {
     return node;
 }
 
-// --- MinHeap (Open List) Functions ---
+// MinHeap (Open List) Functions
 
 void heap_init(MinHeap *heap) {
     if (!heap) return;
@@ -157,7 +155,7 @@ void heap_free(MinHeap *heap) {
     heap->capacity = 0;
 }
 
-// --- Closed List Functions ---
+// Closed List Functions
 
 void closed_list_init(ClosedList *list) {
     if (!list) return;
@@ -189,7 +187,6 @@ void closed_list_free(ClosedList *list) {
     list->capacity = 0;
 }
 
-// --- Main Entry ---
 
 int main(void) {
     MinHeap open_list;
@@ -203,11 +200,6 @@ int main(void) {
 
     while (fgets(line, sizeof(line), stdin) != NULL) {
         trim_line_endings(line);
-
-        // 跳过空行
-        if (line[0] == '\0') {
-            continue;
-        }
 
         // 忽略标记行，不产生输出
         if (strcmp(line, "Commands:") == 0) {
