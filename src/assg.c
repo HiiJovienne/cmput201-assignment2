@@ -1,21 +1,25 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <stdbool.h>
 #include "assg.h"
 
-#define MAX_NODES 100
+static int global_h_max = 0;
 
-//避免频繁动态内存分配）
-static Node node_pool[MAX_NODES];
-static int node_pool_count = 0;
+void set_h_max(int h_max) {
+    global_h_max = h_max;
+}
 
-static Node* open_data[MAX_NODES];
-static Node* closed_data[MAX_NODES];
+// 计算地形权重 w = floor(5 - 4 * (h / H_max))
+static int calculate_weight(int h) {
+    if (global_h_max <= 0) return 5;
+    // 使用整数运算实现精确向下取整：floor(5 - 4h/H_max) = 5 - ceil(4h/H_max)
+    int sub = (4 * h + global_h_max - 1) / global_h_max;
+    int w = 5 - sub;
+    if (w < 1) w = 1;
+    if (w > 5) w = 5;
+    return w;
+}
 
-// 内部辅助函数 
-// 优先级比较：返回 true 表示 a 的优先级高于 b（a 应该更靠近堆顶）
-// 依次比较 f -> h -> x -> y，均为较小者优先
 static bool has_higher_priority(const Node *a, const Node *b) {
     if (a->f != b->f) return a->f < b->f;
     if (a->h != b->h) return a->h < b->h;
@@ -29,37 +33,27 @@ static void swap_nodes(Node **a, Node **b) {
     *b = temp;
 }
 
-// 去除行尾的 \n 和 \r
-static void trim_line_endings(char *str) {
-    size_t len = strlen(str);
-    while (len > 0 && (str[len - 1] == '\n' || str[len - 1] == '\r')) {
-        str[--len] = '\0';
-    }
-}
-
-//  Node Constructor 
-
+// --- Node Constructor (使用 Weighted A* 公式 f = g + w * h) ---
 Node* create_node(int x, int y, int g, int h, Node *parent) {
-    if (node_pool_count >= MAX_NODES) {
-        return NULL;
-    }
-    Node *node = &node_pool[node_pool_count++];
+    Node *node = (Node *)malloc(sizeof(Node));
+    if (!node) return NULL;
+
+    int w = calculate_weight(h);
     node->x = x;
     node->y = y;
     node->g = g;
     node->h = h;
-    node->f = g + h;
+    node->f = g + w * h;
     node->parent = parent;
     return node;
 }
 
-// MinHeap (Open List) Functions
-
+// --- MinHeap (Open List) Functions ---
 void heap_init(MinHeap *heap) {
     if (!heap) return;
-    heap->data = open_data;
+    heap->capacity = 256;
     heap->size = 0;
-    heap->capacity = MAX_NODES;
+    heap->data = (Node **)malloc(sizeof(Node *) * heap->capacity);
 }
 
 void heapify_up(MinHeap *heap, int index) {
@@ -101,7 +95,13 @@ void heapify_down(MinHeap *heap, int index) {
 }
 
 void heap_insert(MinHeap *heap, Node *node) {
-    if (!heap || !node || heap->size >= heap->capacity) return;
+    if (!heap || !node) return;
+    if (heap->size >= heap->capacity) {
+        heap->capacity *= 2;
+        Node **new_data = (Node **)realloc(heap->data, sizeof(Node *) * heap->capacity);
+        if (!new_data) return;
+        heap->data = new_data;
+    }
 
     heap->data[heap->size] = node;
     heap->size++;
@@ -136,9 +136,10 @@ int heap_find(const MinHeap *heap, int x, int y) {
 void heap_decrease_key(MinHeap *heap, int index, int new_g, int new_h) {
     if (!heap || index < 0 || index >= heap->size) return;
 
+    int w = calculate_weight(new_h);
     heap->data[index]->g = new_g;
     heap->data[index]->h = new_h;
-    heap->data[index]->f = new_g + new_h;
+    heap->data[index]->f = new_g + w * new_h;
 
     heapify_up(heap, index);
     heapify_down(heap, index);
@@ -150,22 +151,33 @@ bool heap_is_empty(const MinHeap *heap) {
 
 void heap_free(MinHeap *heap) {
     if (!heap) return;
+    if (heap->data) {
+        for (int i = 0; i < heap->size; i++) {
+            free(heap->data[i]);
+        }
+        free(heap->data);
+    }
     heap->data = NULL;
     heap->size = 0;
     heap->capacity = 0;
 }
 
-// Closed List Functions
-
+// --- Closed List Functions ---
 void closed_list_init(ClosedList *list) {
     if (!list) return;
-    list->data = closed_data;
+    list->capacity = 256;
     list->size = 0;
-    list->capacity = MAX_NODES;
+    list->data = (Node **)malloc(sizeof(Node *) * list->capacity);
 }
 
 void closed_list_add(ClosedList *list, Node *node) {
-    if (!list || !node || list->size >= list->capacity) return;
+    if (!list || !node) return;
+    if (list->size >= list->capacity) {
+        list->capacity *= 2;
+        Node **new_data = (Node **)realloc(list->data, sizeof(Node *) * list->capacity);
+        if (!new_data) return;
+        list->data = new_data;
+    }
     list->data[list->size++] = node;
 }
 
@@ -182,107 +194,13 @@ bool closed_list_contains(const ClosedList *list, int x, int y) {
 
 void closed_list_free(ClosedList *list) {
     if (!list) return;
+    if (list->data) {
+        for (int i = 0; i < list->size; i++) {
+            free(list->data[i]);
+        }
+        free(list->data);
+    }
     list->data = NULL;
     list->size = 0;
     list->capacity = 0;
-}
-
-
-int main(void) {
-    MinHeap open_list;
-    ClosedList closed_list;
-
-    heap_init(&open_list);
-    closed_list_init(&closed_list);
-
-    char line[256];
-    bool is_inserting = false;
-
-    while (fgets(line, sizeof(line), stdin) != NULL) {
-        trim_line_endings(line);
-
-        // 忽略标记行，不产生输出
-        if (strcmp(line, "Commands:") == 0) {
-            continue;
-        }
-
-        // 退出批量插入阶段，不产生输出
-        if (strcmp(line, "done") == 0) {
-            is_inserting = false;
-            continue;
-        }
-
-        // 批量插入状态：解析 x, y, g, h 并插入 Open List
-        if (is_inserting) {
-            int x, y, g, h;
-            if (sscanf(line, "%d, %d, %d, %d", &x, &y, &g, &h) == 4) {
-                Node *node = create_node(x, y, g, h, NULL);
-                if (node != NULL) {
-                    heap_insert(&open_list, node);
-                }
-            }
-            continue;
-        }
-
-        // 命令分派
-        if (strcmp(line, "[O] Insert:") == 0) {
-            is_inserting = true;
-        } 
-        else if (strcmp(line, "[O] Extract") == 0) {
-            Node *min_node = heap_extract_min(&open_list);
-            if (min_node != NULL) {
-                closed_list_add(&closed_list, min_node);
-                printf("Extracted Node (%d, %d), f = %d, g = %d, h = %d\n",
-                       min_node->x, min_node->y, min_node->f, min_node->g, min_node->h);
-            }
-        } 
-        else if (strncmp(line, "[O] Find", 8) == 0) {
-            int x, y;
-            if (sscanf(line, "[O] Find (%d, %d)", &x, &y) == 2) {
-                int idx = heap_find(&open_list, x, y);
-                if (idx != -1) {
-                    printf("Node (%d, %d) has been found\n", x, y);
-                } else {
-                    printf("Node (%d, %d) has not been found\n", x, y);
-                }
-            }
-        } 
-        else if (strncmp(line, "[C] Find", 8) == 0) {
-            int x, y;
-            if (sscanf(line, "[C] Find (%d, %d)", &x, &y) == 2) {
-                if (closed_list_contains(&closed_list, x, y)) {
-                    printf("Node (%d, %d) has been found\n", x, y);
-                } else {
-                    printf("Node (%d, %d) has not been found\n", x, y);
-                }
-            }
-        } 
-        else if (strcmp(line, "[O] IsEmpty") == 0) {
-            printf("%s\n", heap_is_empty(&open_list) ? "True" : "False");
-        } 
-        else if (strcmp(line, "[C] IsEmpty") == 0) {
-            printf("%s\n", (closed_list.size == 0) ? "True" : "False");
-        } 
-        else if (strncmp(line, "[O] DecreaseKey", 15) == 0) {
-            int x, y, new_g;
-            if (sscanf(line, "[O] DecreaseKey (%d, %d), new_g = %d", &x, &y, &new_g) == 3) {
-                int idx = heap_find(&open_list, x, y);
-                if (idx != -1) {
-                    int old_h = open_list.data[idx]->h;
-                    heap_decrease_key(&open_list, idx, new_g, old_h);
-                    int updated_idx = heap_find(&open_list, x, y);
-                    if (updated_idx != -1) {
-                        Node *updated = open_list.data[updated_idx];
-                        printf("Decreased key for Node (%d, %d): f = %d, g = %d, h = %d\n",
-                               updated->x, updated->y, updated->f, updated->g, updated->h);
-                    }
-                }
-            }
-        }
-    }
-
-    heap_free(&open_list);
-    closed_list_free(&closed_list);
-
-    return 0;
 }
